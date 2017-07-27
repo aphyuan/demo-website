@@ -1,0 +1,663 @@
+<!DOCTYPE html><!-- Forward 1.1.6 --><html><head>
+<script type="text/javascript" src="//d3js.org/d3.v3.js?rwcache=522861671"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+<script src="http://underscorejs.org/underscore-min.js"></script>
+<script>
+	(function() {
+  function cartesianProduct(arr) {
+    return _.reduce(arr, function(a, b) {
+      return _.flatten(_.map(a, function(x) {
+        return _.map(b, function(y) {
+          return x.concat([y])
+        })
+      }), true)
+    }, [
+      []
+    ])
+  }
+  d3.bayesianNetwork = function(idOrNode, style, width, height) {
+    var bbox = $(idOrNode)[0].getBoundingClientRect()
+    width = typeof width !== 'undefined' ? width : bbox.width
+    height = typeof height !== 'undefined' ? height : 1000
+    var nodes = []
+    var links = []
+
+    function tabulate(node, columns, data) {
+      var foreignObject = node.append("foreignObject")
+      var table = foreignObject.append("xhtml:body").style("position", "relative").append("table").style("position", "relative"),
+        thead = table.append("thead").data(data),
+        tbody = table.append("tbody").data(data)
+        // append the header row
+      var headerRows = thead.selectAll("tr").data(function(n) {
+        var numStates = n.states.length
+        var numCols = n.cpt.probabilities.length / numStates
+        var parentStates = n.cpt.parents.map(function(p, i) {
+          var cols = p.states.map(function(s) {
+            var result = {
+              text: (p.name + "=" + s)
+            }
+            if ('currentState' in p) result.active = s == p.currentState
+            return result
+          })
+          return cols
+        })
+        var matrix = _.zip.apply(_, cartesianProduct(parentStates))
+        var columnsActive = null
+        matrix.forEach(function(row, rowIndex) {
+          columnsActive = columnsActive || new Array(row.length)
+          row.forEach(function(col, colIndex) {
+            if ('active' in col) {
+              if (typeof columnsActive[colIndex] == 'undefined') columnsActive[colIndex] = col.active
+              else columnsActive[colIndex] = columnsActive[colIndex] && col.active
+            }
+          })
+        })
+        var matrixWithCorrectActiveFlags = matrix.map(function(row) {
+          return row.map(function(col, colIndex) {
+            if (typeof columnsActive[colIndex] == 'undefined') return col
+            else return _.extend({}, col, {
+              active: columnsActive[colIndex]
+            })
+          })
+        })
+        return matrixWithCorrectActiveFlags.map(function(row) {
+          return [{
+            text: ""
+          }].concat(row)
+        }).concat([
+          [{
+            text: n.name
+          }].concat(Array.apply(null, new Array(numCols)).map(function() {
+            return {
+              text: "prob."
+            }
+          })).concat([{
+            text: "inferred"
+          }])
+        ])
+      }).enter().append("tr")
+      headerRows.selectAll("th").data(function(arr) {
+          return arr;
+        }).enter().append("th").text(function(column) {
+          return column.text;
+        }).style("color", function(column) {
+          return ('active' in column) ? (column.active ? "Green" : "LightGray") : "Black"
+        }).attr("colspan", function(column) {
+          return column.colspan;
+        }).attr("align", "center")
+        // create a row for each object in the data
+      var rows = tbody.selectAll("tr").data(function(nod) {
+          var numStates = nod.states.length
+          var sliceLength = nod.cpt.probabilities.length / numStates
+          return nod.states.map(function(s, i) {
+            var mrg = nod.marginalized.probabilities[i]
+            var result = {
+              rowData: [s].concat(nod.cpt.probabilities.slice(i * sliceLength, (i + 1) * sliceLength)).concat([mrg])
+            }
+            if ('currentState' in nod) result.active = s == nod.currentState
+            return result
+          })
+        }).enter().append("tr").style("color", function(column) {
+          return ('active' in column) ? (column.active ? "Green" : "LightGray") : "Black"
+        })
+        // create a cell in each row for each column
+      var cells = rows.selectAll("td").data(function(row) {
+          return row.rowData
+        }).enter().append("td").attr("style", "font-family: Courier") // sets the font style
+        .html(function(d) {
+          if (isNaN(d)) {
+            return d
+          } else {
+            return Math.round(d * 1000) / 1000
+          }
+        })
+      foreignObject.each(function(d) {
+        var tableRect = $(this).find("table")[0].getBoundingClientRect()
+        var width = tableRect.width + 4
+        var height = tableRect.height + 4
+        d3.select(this).attr({
+          width: width,
+          height: height,
+          x: "-" + (width / 2),
+          y: "30px"
+        })
+      })
+      return table
+    }
+
+    function barChartify(node, data) {
+      var barChart = node.append("g").data(data)
+      // var container = barChart.append("g").selectAll("rect.container")
+      //   .data(function(nod) {
+      //     return [nod]
+      //   })
+      //   .enter()
+      //   .append("rect")
+      //   .attr("class", "container")
+      //   .attr("x", -47)
+      //   .attr("y", 15)
+      //   .attr("width", 94)
+      //   .attr("height", function(n) {
+      //     return 8 + n.states.length * 15
+      //   })
+      //   .attr("fill", "rgb(200, 200, 256)")
+      //   .attr("stroke-width", 2)
+      //   .attr("stroke", "rgb(100,100,128)")
+      var bars = barChart.selectAll("rect.bar")
+        .data(function(nod) {
+          return nod.marginalized.probabilities
+        })
+        .enter()
+        .append("rect")
+        .attr("class", "bar")
+        .attr("x", -20)
+        .attr("y", function(d, i) {
+          return 20 + i * 15
+        })
+        .attr("width", function(d, i) {
+          return +d * 40
+        })
+        .attr("height", 12)
+        .attr("fill", function(d, i) {
+          return "rgb(255, 255, " + (i * 10) + ")"
+        })
+
+      var texts = barChart.selectAll("text")
+        .data(function(nod) {
+          return nod.states
+        })
+        .enter()
+        .append("text")
+        .text(function(d) {
+          return d
+        })
+        .attr("text-anchor", "middle")
+        .attr("x", function(d, i) {
+          return 0
+        })
+        .attr("y", function(d, i) {
+          return i * 15 + 30
+        })
+        .attr("font-family", "sans-serif")
+        .attr("font-size", "11px")
+        .attr("fill", "black")
+      return barChart
+    }
+    var color = d3.scale.category20()
+    var force = d3.layout.force().charge(-10000).linkDistance(300).size([width, height])
+    force.nodes(nodes).links(links).start()
+    var svg = d3.select(idOrNode).append("svg").attr("width", width).attr("height", height)
+      // build the arrow.
+    svg.append("svg:defs").selectAll("marker").data(["end"]) // Different link/path types can be defined here
+      .enter().append("svg:marker") // This section adds in the arrows
+      .attr("id", "markerArrow")
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 10)
+      .attr("refY", 0)
+      .attr("markerWidth", 5)
+      .attr("markerHeight", 5)
+      .attr("orient", "auto")
+      .append("svg:path")
+      .attr("d", "M0,-5L10,0L0,5")
+    var circleSize = 100
+    var textColor = "black"
+    var edge = svg.selectAll(".edge")
+    var node = svg.selectAll(".node")
+
+    function render(network) {
+      console.log("Rendering the following nodes and edges", network.nodes, network.edges)
+      network.nodes.forEach(function(node) {
+        var existingNode = _.findWhere(nodes, {
+          name: node.name
+        })
+        if (existingNode) {
+          _.extend(node, _.pick(existingNode, 'x', 'y', 'px', 'py', 'fixed'))
+        }
+      })
+      nodes.splice(0, nodes.length)
+      links.splice(0, links.length)
+      network.nodes.forEach(function(n) {
+        nodes.push(n)
+      })
+      network.edges.forEach(function(e) {
+        links.push(e)
+      })
+      edge = edge.data(force.links())
+      edge.enter()
+        .append("svg:path")
+        .attr("class", "link")
+        .attr("marker-end", "url(#markerArrow)")
+        .style("stroke", "#999")
+        .style("stroke-opacity", ".6")
+        .style("stroke-width", function(d) {
+        return Math.sqrt(16);
+      })
+      edge.exit().remove()
+      var node_drag = d3.behavior.drag().on("dragstart", dragstart).on("drag", dragmove).on("dragend", dragend);
+
+      function dragstart(d, i) {
+        force.stop() // stops the force auto positioning before you start dragging
+      }
+
+      function dragmove(d, i) {
+        d.px += d3.event.dx;
+        d.py += d3.event.dy;
+        d.x += d3.event.dx;
+        d.y += d3.event.dy;
+        tick(); // this is the key to make it work together with updating both px,py,x,y on d !
+      }
+
+      function dragend(d, i) {
+        d.fixed = true; // of course set the node to fixed so the force doesn't include the node in its auto positioning stuff
+        tick();
+        force.resume();
+      }
+      node = node.data(force.nodes(), function(d) {
+        return d.name;
+      })
+      node.enter().append("g").attr("class", "node").call(node_drag)
+      node.exit().remove()
+      node.append("circle").attr("r", circleSize).style("fill", function(d) {
+        return color(d.group);
+      })
+      node.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", "7px")
+        .attr("font-size", "20px")
+        .attr("font-family", "sans-serif")
+        .attr("fill", textColor).attr("stroke", textColor).text(function(d) {
+          return d.name;
+        })
+      node.append("title").text(function(d) {
+        return d.name;
+      })
+      if (style == "cpt") {
+        tabulate(node, ["name", "probability"], nodes)
+      } else {
+        barChartify(node, nodes)
+      }
+
+
+      function tick() {
+        edge.attr("d", function(d) {
+          var dx = d.target.x - d.source.x,
+            dy = d.target.y - d.source.y
+          var lineAngle = Math.atan2(dy, dx)
+          return "M" + (d.source.x + Math.cos(lineAngle) * circleSize) + ","
+            + (d.source.y + Math.sin(lineAngle) * circleSize)
+            + "L" + (d.target.x - Math.cos(lineAngle) * circleSize) + ","
+            + (d.target.y - Math.sin(lineAngle) * circleSize)
+        })
+        node.attr("transform", function(d) {
+          return "translate(" + d.x + "," + d.y + ")";
+        })
+      }
+      force.on("tick", tick)
+      force.start()
+    }
+    return render
+  };
+})();
+
+
+</script>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+		<meta name="robots" content="index, follow" />
+		<meta name="generator" content="RapidWeaver" />
+		<meta content="width=device-width, initial-scale=1" name="viewport"><title>home | Zoom Social</title>		<link rel='stylesheet' type='text/css' media='all' href='rw_common/plugins/stacks/stacks.css?rwcache=522861671' />
+		<link rel='stylesheet' type='text/css' media='all' href='files/stacks_page_page0.css?rwcache=522861671' />
+		<script type='text/javascript' charset='utf-8' src='rw_common/plugins/stacks/jquery-2.2.4.min.js?rwcache=522861671'></script>
+		<link rel="stylesheet" href="rw_common/plugins/stacks/font-awesome.min.css?rwcache=522861671">
+		
+		<script type='text/javascript' charset='utf-8' src='files/stacks_page_page0.js?rwcache=522861671'></script>
+		<meta class="stacks3 stack version" id="com.stacks4stacks.stacks.toggle" name="Toggle" content="1.1.12">
+		<meta class="stacks3 stack version" id="com.nickcatesdesign.stacks.rails_item" name="Rail - Item" content="">
+		<meta class="stacks3 stack version" id="com.joeworkman.stacks.elevator" name="Elevator" content="1.1.0">
+		<meta class="stacks3 stack version" id="com.nickcatesdesign.stacks.rails_section" name="Rail - Section" content="">
+		<meta class="stacks3 stack version" id="com.nickcatesdesign.stacks.rails" name="Rails" content="1.0.1">
+		<meta class="stacks3 stack version" id="com.seydesign.stack.codafy" name="Codafy" content="2.0.0">
+		
+<style type="text/css"><ul class="disc">,ul.circle,ul.square,ol.arabic-numbers,ol.upper-alpha,ol.lower-alpha,ol.upper-roman,ol.lower-roman{margin:0 0 18px 0;padding:0;padding-left:20px;list-style-position:outside}ul.disc{list-style-type:disc}ul.circle{list-style-type:circle}ul.square{list-style-type:square}ol.arabic-numbers{list-style-type:decimal}ol.upper-alpha{list-style-type:upper-alpha}ol.lower-alpha{list-style-type:lower-alpha}ol.upper-roman{list-style-type:upper-roman}ol.lower-roman{list-style-type:lower-roman}b,strong{font-weight:bolder}em{font-style:italic}a{text-decoration:none}hr.t{height:1px;font-size:0;width:100%;border:none}img[alt~="edge"]{width:100%;height:auto;line-height:0}.cf:after{content:"";display:table;clear:both}.image-left img{float:left;margin:5px 20px 15px 5px}.image-right img{float:right;margin:5px 5px 15px 20px}.image-left img[alt~="edge"]{max-width:50%}.image-right img[alt~="edge"]{max-width:50%}#nav-config,#layout-config{position:absolute;visibility:hidden}@-webkit-keyframes ncdFadeIn{from{opacity:0}to{opacity:1}}html,body{padding:0;margin:0;max-width:100% !important;overflow-x:hidden !important}html{font-size:17px}body{font-family:'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-animation:ncdFadeIn .4s ease-out both .2s}body.ready #site-feature #site-logo{left:0;top:50%;width:40%;padding:0 30%;position:absolute}body.ready.feature #site-feature{max-width:1090px}@media screen and (min-width: 850px){body.ready.pull section.theme,body.ready.feature.pull section.theme,body.ready.feature.logo.pull section.theme,body.ready.sf-ec.pull section.theme,body.ready.sf-ec.logo.pull section.theme{margin-top:60px}}body.ready.pull #site-feature,body.ready.feature.pull #site-feature,body.ready.feature.logo.pull #site-feature,body.ready.sf-ec.pull #site-feature,body.ready.sf-ec.logo.pull #site-feature{position:absolute;width:100%;max-width:100%}body.ready.pull #site-feature #site-logo img,body.ready.feature.pull #site-feature #site-logo img,body.ready.feature.logo.pull #site-feature #site-logo img,body.ready.sf-ec.pull #site-feature #site-logo img,body.ready.sf-ec.logo.pull #site-feature #site-logo img{display:none}body.sf-ec #site-feature .inner-wrapper{z-index:10;position:relative;max-width:100% !important;width:auto;margin-left:0;left:0}body.sf-ec #site-feature #site-logo{z-index:30;position:absolute;padding:0;margin-right:30%;margin-left:30%}@media screen and (min-width: 850px){body.feature section.theme,body.logo section.theme,body.feature.logo section.theme,body.sf-ec section.theme,body.sf-ec.logo section.theme{margin-top:-120px}}@media screen and (max-width: 850px){body.feature section.theme,body.logo section.theme,body.feature.logo section.theme,body.sf-ec section.theme,body.sf-ec.logo section.theme{padding:7%;margin-top:0;margin-bottom:0}}@media screen and (min-width: 850px){body .inner-wrapper{width:850px;position:relative}body .inner-wrapper #site-logo img{width:100%;height:auto}}body.no-title nav.theme{top:0 !important}body.no-title #gradient-effect{top:46px;margin-top:0}body.no-title #site-info{display:none}body.no-title.feature #gradient-effect{top:auto}body.no-title.full #gradient-effect{top:auto}.wrapper{max-width:850px;position:relative;margin:0 auto}.wrapper#container{z-index:20}header.theme{clear:both;position:relative}@media screen and (max-width: 850px){header.theme{top:0 !important}}#site-info{padding:20px;z-index:10;text-align:center;background:#fff}#site-info h1{font-size:33px;line-height:normal;font-weight:400;margin:0}#site-info span{font-size:15px;display:block;color:#AAA}#site-info h1+span{padding-top:0.8%}#site-feature{margin:0 auto;width:auto;position:relative;max-width:100%;background-size:cover;line-height:0}#site-feature.ratio>#gradient-effect{top:0;margin-top:0;bottom:auto}#site-feature.ratio .inner-wrapper{position:absolute;top:0;width:100%;height:100%}#site-feature .inner-wrapper{width:100%;margin:auto}#site-feature .middle{position:absolute;text-align:center;z-index:2;transform:translate3d(0, -50%, 0);margin-top:-60px}#site-feature #site-logo{text-align:center;padding:40px;position:relative;z-index:10}#site-feature #site-logo img{max-width:100%;height:auto;max-height:90%;width:auto;margin-top:5%;margin-bottom:5%}@media screen and (max-width: 850px){#site-feature #site-logo img{opacity:1 !important}}#site-feature #site-logo.middle{padding:0;left:-9999px;top:-9999px;width:0}@media screen and (max-width: 850px){#site-feature #site-logo.middle{margin-top:0;max-height:100%}}#site-feature #thisImg{width:100%;top:0;position:absolute}#site-feature #thisImg p,#site-feature #thisImg br{display:none}#site-feature #thisImg>img{width:100%;max-width:100%;height:auto}body.ready.feature #site-feature #thisImg{position:static;visibility:visible}body.feature #gradient-effect,body.sf-ec #gradient-effect{height:170px;bottom:-1px;top:auto}@media screen and (max-width: 850px){body.feature #gradient-effect,body.sf-ec #gradient-effect{display:none}}#gradient-effect{position:absolute;height:450px;width:100%;left:0;top:0}#gradient-effect.ncd-hide{display:none}li#plusNav>div:before{content:'More'}li#plusNav>div:after{right:10px}nav.theme a{color:#999}nav.theme>ul:before{background:#333}nav.theme{position:relative;overflow:hidden;z-index:1000;top:0;left:0;text-align:center;width:100%;font-weight:400;font-size:15px;height:46px;line-height:46px;user-select:none;transition:transform 0.25s}nav.theme.overflow{overflow:visible}nav.theme.open li{font-smoothing:subpixel-antialiased}nav.theme.m ul.l1{display:block;width:2000px}nav.theme.m ul.l1>li.move{visibility:hidden}nav.theme.m li#plusNav{float:none;right:0;top:0}nav.theme.m li#plusNav.open>ul.l2{right:0;opacity:1}nav.theme.m li#plusNav>ul.l2{right:-9999px;left:auto;opacity:0;transition:opacity .25s, transform .25s, right 50ms 0.25s, top 50ms 0.25s, left 50ms 0.25s}nav.theme.m li#plusNav>ul.l2>li{display:none}nav.theme.m li#plusNav>ul.l2>li.move{display:block;visibility:visible}nav.theme.m ul.l1>li#plusNav.open>ul.l2,nav.theme.m li#plusNav ul.l2>li.open>ul.l3{transition:opacity .25s, transform .25s}nav.theme>ul{height:46px;line-height:46px;display:inline-block}nav.theme>ul>li>a{position:relative;z-index:10;white-space:nowrap}nav.theme>ul>li.open>ul.l2{left:0;top:100%;opacity:1;transform:translateY(0);padding-bottom:46px;transition:opacity 0.25s, transform .25s}nav.theme>ul:before{width:100%;height:46px;position:absolute;left:0;top:0;content:'';display:block;z-index:5}nav.theme ul{list-style:none;padding:0;margin:0}nav.theme ul li{float:left;position:relative;z-index:900}nav.theme ul li.open{z-index:1000}nav.theme ul li#plusNav{position:absolute;top:-9999px}nav.theme ul li#plusNav div[role="show-more-navigation"]{padding:0 25px;background:#000;line-height:46px;display:block;cursor:pointer;z-index:10;position:relative;transition:background 0.15s, color 0.15s}nav.theme ul li.hasChild a{padding-right:30px}nav.theme ul li.hasChild>a:after,nav.theme ul li div[role="show-more-navigation"]:after{content:'+';font-size:16px;top:-2px;right:15px;position:absolute;font-family:'Helvetica Neue', Helvetica, Arial, sans-serif;transition:transform .3s;transform-origin:50% 55%;z-index:1000}nav.theme ul li a{padding:0 20px;line-height:46px;display:block;text-decoration:none;transition:color 0.20s}nav.theme ul ul{width:250px;text-align:left;opacity:0;z-index:1000;position:absolute;left:-9999px;top:-9999px}nav.theme ul ul li{float:none}nav.theme ul ul li.hasChild>a:after{font-size:22px;top:4px}nav.theme ul ul li a{padding-top:10px;padding-bottom:10px;padding-left:25px;padding-right:20px;line-height:normal}nav.theme ul ul li ul{background:transparent}nav.theme ul ul li ul li a{padding-left:35px}nav.theme ul ul li ul ul li a{padding-left:45px}nav.theme ul ul li ul ul ul li a{padding-left:55px}nav.theme ul ul li ul ul ul ul li a{padding-left:65px}nav.theme ul ul li ul ul ul ul ul li a{padding-left:75px}nav.theme li.open>a:after,nav.theme li.open div[role="show-more-navigation"]:after{transform:rotate(45deg)}nav.theme ul.l2{transform:translateY(-5px);transition:opacity 0.25s, transform .25s, top 0s .25s, left 0s .25s}nav.theme ul.l2>li:last-child{padding-bottom:10px}nav.theme ul.l2 li.open>ul.l3,nav.theme ul.l2 li.open>ul.l4,nav.theme ul.l2 li.open>ul.l5,nav.theme ul.l2 li.open>ul.l6,nav.theme ul.l2 li.open>ul.l7{position:relative;left:0;top:0;opacity:1}nav.theme ul.l3{padding-bottom:10px}nav.theme ul.l3,nav.theme ul.l4,nav.theme ul.l5,nav.theme ul.l6,nav.theme ul.l7{transition:opacity 0.5s}body.hasScrolled header.theme{padding-top:46px}body.hasScrolled nav.theme{position:fixed;top:0 !important;height:auto;backface-visibilty:hidden;margin-top:-46px !important;transform:translateY(46px) !important;transition:transform 0.25s, height 0 .25s}body.hasScrolled nav.theme.overflow{overflow:hidden;overflow-y:visible}body.hasScrolled nav.theme.open{bottom:0 !important;transition:transform 0.25s, height 0}body.hasScrolled nav.theme.ncd-hide{transform:translateY(0) !important}body.hasScrolled nav.theme.stay{position:fixed;top:0 !important;margin-top:-46px !important;transform:translateY(46px) !important;transition:transform 0.25s, height 0 .25s}body.hasScrolled nav.theme.stay.ncd-hide{transform:translateY(46px) !important}#page-breadcrumb{line-height:normal;font-size:14px;width:100%;list-style:none !important;margin:0;padding:0;display:none;padding:0 0 3% 0;font-style:normal}#page-breadcrumb.visible{display:block}#page-breadcrumb a{text-decoration:none}#page-breadcrumb li{float:left;margin:0 15px 10px 0}#page-breadcrumb li+li+li>a{width:15px;display:inline-block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#page-breadcrumb li+li:before{border-style:solid;border-width:2px 2px 0 0;content:"";font-weight:400;display:inline-block;height:0.35em;position:relative;top:0.37em;vertical-align:top;width:0.35em;left:-9px;transform:rotate(45deg)}#page-breadcrumb li:last-child a{width:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}section.theme{padding:7% 12%;position:relative;line-height:160%;background:#fff;min-height:100px}@media screen and (min-width: 850px){section.theme{margin-top:60px}}section.theme h1,section.theme h2,section.theme h3,section.theme h4,section.theme h5,section.theme h6{margin:0 0 3.5% 0 !important;font-weight:400}section.theme h6{font-weight:600}section.theme a[class^='social-']{font-size:1.6em;transition:color 300ms}section.theme blockquote{margin:0;padding:0 0 0 4%}section.theme blockquote p{display:inline}section.theme code{font-family:monospace, monospace;vertical-align:top;line-height:80%;font-size:0.8125em}section.theme .image-left{float:left;margin-right:20px}section.theme .image-right{float:right;margin-left:20px}section.theme img{max-width:100%;height:auto}section.theme img[alt*="site-feature"],section.theme img[alt*="page-background"]{display:none}footer.theme{font-size:0.95em;text-align:center;clear:both;padding:7% 12%;position:relative;line-height:160%}@media screen and (min-width: 850px){footer.theme{margin-bottom:7%}}footer.theme p{margin:0}footer.theme #myExtraContent2{padding-bottom:10px;text-align:left}footer.theme .copy{display:block;text-align:center}footer.theme #rw_email_contact:before{content:'';vertical-align:middle;display:inline-block;position:relative;height:5px;width:5px;border-radius:5px;margin:0 10px}footer.theme a[class^='social-']{font-size:30px;padding:12px;display:inline-block}.blog-entry{padding:0;border-bottom-style:solid;border-bottom-width:1px}.blog-entry+.blog-entry{padding:30px 0 0}.blog-entry h1.blog-entry-title{font-size:1.35em !important;line-height:normal}.blog-entry .blog-entry-date{padding-bottom:5%}.blog-entry .blog-entry-date a{padding:0;font-weight:bolder}.blog-entry .blog-entry-body{padding:0 0 30px}.blog-entry .blog-entry-body .blog-read-more{display:block;font-size:1em;padding:15px 0 0;font-style:italic;font-weight:bolder}.blog-entry .blog-entry-body a.blog-comment-link{padding:15px 0;display:block;clear:both}.blog-entry .blog-entry-body .blog-entry-tags{clear:both;word-wrap:break-word;margin-top:10px;padding-top:10px}.blog-entry .blog-entry-body .blog-entry-tags a{padding:0 3px}#blog-categories,#blog-archives,.blog-tag-cloud,#blog-rss-feeds{list-style:none;font-size:0.9em;padding:30px 0 !important;display:block;position:relative;border-bottom-style:solid;border-bottom-width:1px}#blog-categories:before,#blog-archives:before,.blog-tag-cloud:before,#blog-rss-feeds:before{font-size:1.1em;font-weight:bolder;display:block;padding-bottom:10px}#blog-categories a,#blog-archives a,.blog-tag-cloud a,#blog-rss-feeds a{padding:2px 0;display:block}#blog-rss-feeds{border-bottom:none}#blog-categories:before{content:"Categories"}#blog-archives:before{content:"Archives"}.blog-tag-cloud:before{content:"Tags"}#blog-rss-feeds:before{content:"Feeds"}.blog-category-link-enabled,.blog-archive-link-enabled,.blog-rss-link{display:block}#blog-categories br,#blog-archives br,#blog-rss-feeds br,.blog-category-link-disabled,.blog-archive-link-disabled,.blog-archive-month,.blog-archive-link{display:none}form>div>label{font-weight:normal;line-height:24px;font-size:0.85em;padding-bottom:4px}form>div .form-input-field{font-size:14px;padding:1.7%;display:inline-block;margin:0;width:96.6%;border-style:solid;border-width:2px;border-radius:3px;background:transparent;-webkit-appearance:none}form>div input.form-input-button[type="reset"],form>div input.form-input-button[type="submit"]{font-weight:normal;font-weight:bolder;font-size:0.9em;display:inline-block;padding:1.7% 3%;margin:0 20px 0 0;background:transparent;cursor:pointer;-webkit-appearance:none;border-radius:3px;border-style:solid;border-width:2px}form>div .form-input-field:focus{box-shadow:none;outline:none}@media screen and (850px){form>div .form-input-field{padding:3%;width:94%}form>div input.form-input-button[type="reset"],form>div input.form-input-button[type="submit"]{padding:3%}}.album-title{padding:0 !important}.album-wrapper ul li p{font-size:0.8em !important}.movie-page-title{font-size:1.6em;font-weight:normal;line-height:18px;margin-left:3%;margin-right:3%;padding-bottom:1.5%}.movie-page-description{padding:10px 0 35px;margin-left:3%;margin-right:3%}.movie-thumbnail-frame{display:block;margin:0 5px 60px 0;float:left}.movie-thumbnail-frame{display:inline-block;text-align:center;position:relative;margin:0 8px 60px;width:100%;height:auto}.movie-thumbnail-frame img{margin:0;position:relative;z-index:10;box-shadow:0px 1px 4px #999;width:100%;height:100%;display:inline;perspective:1000;backface-visibility:hidden;transition:all 600ms cubic-bezier(0.215, 0.61, 0.355, 1)}.movie-thumbnail-frame .movie-thumbnail-caption{padding-top:3px;font-size:1em;float:left}.movie-background{background-image:none}.movie-background .movie-title{margin:0 30px;padding-top:20px;letter-spacing:1px;font-size:12px}.movie-background .movie-frame{text-align:center;padding-top:20px}.filesharing-item{padding-bottom:30px}.filesharing-item+.filesharing-item{padding-top:30px;border-top-width:1px;border-top-style:solid}.filesharing-item .filesharing-item-title{margin:0 0 15px}.filesharing-item .filesharing-item-title a{font-size:1.05em;font-weight:bolder;border:none;display:block;background:transparent}.filesharing-item .filesharing-item-title a:hover{box-shadow:none;text-decoration:none !important}.filesharing-item .filesharing-item-title .filesharing-item-description{padding-bottom:10px}ul.tree,ul.tree ul{padding:0 0 0 20px}ul.tree li,ul.tree ul li{padding:7px 0 0 0}</ul></style></head><body><header class="theme"><div id="site-info"><div class="wrapper cf"><h1>Zoom Social</h1><span>World's Fastest Location-Based Big Data Engine</span></div></div><nav class="theme cf"><ul><li class="current"><a href="./" rel="">home</a></li><li><a href="contact-form/" rel="">contact</a></li></ul></nav><div id="site-feature"><div class="inner-wrapper"><div id="site-logo"><a href=""></a></div><div id="thisImg"><img src="rw_common/images/background_new_zoomsocial.png"><div id="gradient-effect"></div></div></div></div></header><div class="wrapper" id="container"><section class="theme main cf">
+<div id='stacks_out_1_page0' class='stacks_top'><div id='stacks_in_1_page0' class=''><div id='stacks_out_72_page0' class='stacks_out'><div id='stacks_in_72_page0' class='stacks_in '><div id='stacks_out_p72_n1_page0' class='stacks_out'><div id='stacks_in_p72_n1_page0' class='stacks_in com_nickcatesdesign_stacks_rails_stack'>
+<div id="rails-wrapper" class="cf rail-left">
+  <div class="rails-rail cf" data-ncdp='rails' data-ncdv='1.0.1' data-ncdt='stack'>
+    <div id="rails-nav">
+    	<ul>
+    		<li><a class="" href="http://"><i class="fa fa-thumb-tack" style="font-size:18px;top:1px;margin-right:10px;margin-left:0px;"></i>About</a></li><li><a class="" href="http://"><i class="fa fa-globe" style="font-size:18px;top:1px;margin-right:10px;margin-left:0px;"></i>Technology</a></li><li><a class="" href="http://"><i class="fa fa-delicious " style="font-size:18px;top:1px;margin-right:10px;margin-left:0px;"></i>Products</a></li><li><a class="" href="http://"><i class="fa fa-lightbulb-o" style="font-size:18px;top:1px;margin-right:10px;margin-left:0px;"></i>Cases</a></li>
+    	</ul>
+    </div>
+  </div>
+  <div id="rails-sections" class="cf">
+    <div id="rails-push">
+      
+<style scoped>
+.stacks_in_p72_n63_page0.ts-box{background: #FFFFFF;color: #FFFFFF;}
+.stacks_in_p72_n63_page0.ts-box a{color: #00A8FF;}
+.stacks_in_p72_n63_page0.ts-box a:hover{color: #00CCFF;}
+.stacks_in_p72_n63_page0.ts-box.transparent{background: none;}
+.stacks_in_p72_n63_page0.ts-box .count:before{background: #FFFFFF;}
+.stacks_in_p72_n63_page0.ts-box.transparent .count:before{background: #fff;}
+</style>
+
+<div class="ts-box stacks_in_p72_n63_page0 transparent"><div id='stacks_out_p72_n319_page0' class='stacks_out'><div id='stacks_in_p72_n319_page0' class='stacks_in text_stack'><span id='stacks_in_p72_n320_page0'><span style="font:14px Times-Roman; color:#000000;"><font color="white">Locus Social developed the world&rsquo;s fastest location-based big data engine. We provide application and service to individual, organizations and government. We are able to analyze even visualize location based data by creating new layers on maps. </font></span><span style="font:12px Times-Roman; color:#000000;"><br /></span></span></div></div></div>
+<div class="ts-box stacks_in_p72_n79_page0 transparent"><div id='stacks_out_p72_n83_page0' class='stacks_out'><div id='stacks_in_p72_n83_page0' class='stacks_in text_stack'><b>Technology</b><br /></n><br /></div></div><div id='stacks_out_p72_n307_page0' class='stacks_out'><div id='stacks_in_p72_n307_page0' class='stacks_in html_stack'><div id="bn"/>
+      <script type="text/javascript">
+    var nodes = [
+
+            {
+          "name": "Pluggable Algorithms",
+          "states": ["Artificial Intelligence", "Analytical modeling", "Natural language processing", "clustering analysis"],
+          "cpt": {
+              "node": {
+                  "name": "Pluggable Algorithms",
+                  "states": ["Door 1", "Door 2", "Door 3"]
+              },
+              "parents": [],
+              "probabilities": [0,0,0]
+          },
+          "marginalized": {
+              "node": {
+                  "name": "Pluggable Algorithms",
+                  "states": ["Door 1", "Door 2", "Door 3"]
+              },
+              "parents": [],
+              "probabilities": [0,0, 0.0]
+          }
+          },
+      {
+    "name": "Big Data",
+    "states": ["Billions of data", "40 trillion areas"],
+    "cpt": {
+        "node": {
+            "name": "Big Data",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [],
+        "probabilities": [0,0,0]
+    },
+    "marginalized": {
+        "node": {
+            "name": "Big Data",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [],
+        "probabilities": [0,0, 0.0]
+    }
+    },
+      {
+    "name": "Location-Based",
+    "states": ["40 trillion areas", "Street Corner to the entire world"],
+    "cpt": {
+        "node": {
+            "name": "Location-Based",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [],
+        "probabilities": [0,0,0]
+    },
+    "marginalized": {
+        "node": {
+            "name": "Location-Based",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [],
+        "probabilities": [0,0, 0.0]
+    }
+}, {
+    "name": "Real-Time",
+    "states": ["millisecond latency"],
+    "cpt": {
+        "node": {
+            "name": "Real-Time",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [],
+        "probabilities": [0,0,0]
+    },
+    "marginalized": {
+        "node": {
+            "name": "Real-Time",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [],
+        "probabilities": [0,0,0]
+    }
+}, {
+    "name": "Locus Engine",
+    "states": [],
+    "cpt": {
+        "node": {
+            "name": "Locus Engine",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+        "parents": [{
+            "name": "Pluggable Algorithms",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+          {
+            "name": "Big Data",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        },
+          {
+            "name": "Location-Based",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        }, {
+            "name": "Real-Time",
+            "states": ["Door 1", "Door 2", "Door 3"]
+        }],
+        "probabilities": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "marginalized": {
+        "node": {
+            "name": "Locus Engine",
+            "states": []
+        },
+        "parents": [],
+        "probabilities": []
+    }
+}]
+var edges = [{"source":0,"target":4},{"source":1,"target":4},{"source":2,"target":4},{"source":3,"target":4}]
+// Style can be "cpt" or "barchart". "cpt" doesn't look nice on Chrome
+var bnGraph = d3.bayesianNetwork("#bn", "barchart")
+bnGraph({"nodes": nodes, "edges": edges})
+</script></div></div><div id='stacks_out_p72_n131_page0' class='stacks_out'><div id='stacks_in_p72_n131_page0' class='stacks_in html_stack'>
+<br /></div></div><div id='stacks_out_p72_n122_page0' class='stacks_out'><div id='stacks_in_p72_n122_page0' class='stacks_in com_stacks4stacks_stacks_toggle_stack'><!-- Toggle Stack by Will Woodgate. Visit http://www.stacks4stacks.com for more information -->
+
+<div id="toggleWrapper_stacks_in_p72_n122_page0">
+	
+	<div id="toggleTrigger_stacks_in_p72_n122_page0" class="toggleTrigger"><a href="#toggleTrigger_stacks_in_p72_n122_page0"></a><div id='stacks_out_p72_n317_page0' class='stacks_out'><div id='stacks_in_p72_n317_page0' class='stacks_in text_stack'>+ Click to see feature details</div></div></div>
+
+	
+	<div id="toggleContainer_stacks_in_p72_n122_page0" class="toggleContainer">
+		<div id='stacks_out_p72_n138_page0' class='stacks_out'><div id='stacks_in_p72_n138_page0' class='stacks_in com_yourhead_stacks_two_columns_stack'><div class='s3_row'>
+	<div class='s3_column s3_column_left'><div id='stacks_out_p72_n145_page0' class='stacks_out'><div id='stacks_in_p72_n145_page0' class='stacks_in markdown_stack'><span id='stacks_in_p72_n146_page0'><h3 id="location-based">Location-Based</h3>
+
+<ul>
+<li>categorize data</li>
+<li>40 trillion areas</li>
+<li>Street corner to the entire world</li>
+</ul></span></div></div></div>
+	<div class='s3_column s3_column_right'><div id='stacks_out_p72_n147_page0' class='stacks_out'><div id='stacks_in_p72_n147_page0' class='stacks_in markdown_stack'><span id='stacks_in_p72_n148_page0'><h3 id="real-time">Real-Time</h3>
+
+<ul>
+<li>milisecond latency</li>
+<li>incoming data processing</li>
+<li>40 trillion areas</li>
+</ul></span></div></div></div>
+</div></div></div><div id='stacks_out_p72_n161_page0' class='stacks_out'><div id='stacks_in_p72_n161_page0' class='stacks_in com_yourhead_stacks_two_columns_stack'><div class='s3_row'>
+	<div class='s3_column s3_column_left'><div id='stacks_out_p72_n168_page0' class='stacks_out'><div id='stacks_in_p72_n168_page0' class='stacks_in markdown_stack'><span id='stacks_in_p72_n169_page0'><h3 id="bigdata">Big data</h3>
+
+<ul>
+<li><p>hottest data processing method</p></li>
+<li><p>40 trillion areas</p></li>
+</ul></span></div></div></div>
+	<div class='s3_column s3_column_right'><div id='stacks_out_p72_n165_page0' class='stacks_out'><div id='stacks_in_p72_n165_page0' class='stacks_in markdown_stack'><span id='stacks_in_p72_n166_page0'><h3 id="pluggablealgorithm">Pluggable Algorithm</h3>
+
+<ul>
+<li>Artificial Intelligence</li>
+<li>clustering analysis</li>
+</ul></span></div></div></div>
+</div></div></div>
+	</div><!--/toggleContainer-->
+
+	
+
+</div><!--/toggleWrapper-->
+
+<div style="clear:both;"></div></div></div></div>
+<style scoped>
+.stacks_in_p72_n91_page0.ts-box{background: #FFFFFF;color: #FFFFFF;}
+.stacks_in_p72_n91_page0.ts-box a{color: #00A8FF;}
+.stacks_in_p72_n91_page0.ts-box a:hover{color: #00CCFF;}
+.stacks_in_p72_n91_page0.ts-box.transparent{background: none;}
+.stacks_in_p72_n91_page0.ts-box .count:before{background: #FFFFFF;}
+.stacks_in_p72_n91_page0.ts-box.transparent .count:before{background: #fff;}
+</style>
+
+<div class="ts-box stacks_in_p72_n91_page0 transparent"><div id='stacks_out_p72_n117_page0' class='stacks_out'><div id='stacks_in_p72_n117_page0' class='stacks_in text_stack'><b>Products</b><br /><br /></div></div><div id='stacks_out_p72_n258_page0' class='stacks_out'><div id='stacks_in_p72_n258_page0' class='stacks_in com_yourhead_stacks_two_columns_stack'><div class='s3_row'>
+	<div class='s3_column s3_column_left'><div id='stacks_out_p72_n179_page0' class='stacks_out'><div id='stacks_in_p72_n179_page0' class='stacks_in text_stack'><span id='stacks_in_p72_n180_page0'><br /><br /><i>Zoom Social</i><br /><br /><br /><i>Get the best, real-time worldwide trendings based on tiles and locations.</I><br /><br /></span></div></div></div>
+	<div class='s3_column s3_column_right'><div id='stacks_out_p72_n263_page0' class='stacks_out'><div id='stacks_in_p72_n263_page0' class='stacks_in html_stack'><br />
+<br />
+<br />
+<br /></div></div><div id='stacks_out_p72_n309_page0' class='stacks_out'><div id='stacks_in_p72_n309_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-7397444-112x112.png' alt='Stacks Image p72_n310' />
+</div>
+
+</div></div></div>
+</div></div></div><div id='stacks_out_p72_n181_page0' class='stacks_out'><div id='stacks_in_p72_n181_page0' class='stacks_in com_yourhead_stacks_two_columns_stack'><div class='s3_row'>
+	<div class='s3_column s3_column_left'><div id='stacks_out_p72_n200_page0' class='stacks_out'><div id='stacks_in_p72_n200_page0' class='stacks_in html_stack'><br />
+<br /></div></div><div id='stacks_out_p72_n204_page0' class='stacks_out'><div id='stacks_in_p72_n204_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <a href="https://itunes.apple.com/us/app/zoom-social-real-time-local/id937077223?mt=8#" rel="external"><img class='imageStyle' src='files/stacks-image-e7c605f.png' alt='Stacks Image p72_n205' /></a>
+</div>
+
+</div></div><div id='stacks_out_p72_n206_page0' class='stacks_out'><div id='stacks_in_p72_n206_page0' class='stacks_in html_stack'><br />
+</div></div><div id='stacks_out_p72_n196_page0' class='stacks_out'><div id='stacks_in_p72_n196_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <a href="https://play.google.com/store/apps/details?id=com.locussocial.zoomsocial&utm_source=global_co&utm_medium=prtnr&utm_content=Mar2515&utm_campaign=PartBadge&pcampaignid=MKT-Other-global-all-co-prtnr-py-PartBadge-Mar2515-1" rel="external"><img class='imageStyle' src='files/stacks-image-20e89d4.png' alt='Stacks Image p72_n197' /></a>
+</div>
+
+</div></div><div id='stacks_out_p72_n208_page0' class='stacks_out'><div id='stacks_in_p72_n208_page0' class='stacks_in com_yourhead_stack_quote_stack'>
+<div class='pullquote'><span id='stacks_in_p72_n209_page0'>Eye opening. With a shake of phone I get to know what's going on around me… What's hot and what's not, to see pictures real time and to interact with other folks. It loads fast - literally faster than all social apps I've experienced before with iPhone</span>
+<div id='stacks_in_p72_n208_page0_source'>App User Review</div>
+</div></div></div></div>
+	<div class='s3_column s3_column_right'><div id='stacks_out_p72_n213_page0' class='stacks_out'><div id='stacks_in_p72_n213_page0' class='stacks_in html_stack'><br />
+<br />
+<br />
+</div></div><div id='stacks_out_p72_n184_page0' class='stacks_out'><div id='stacks_in_p72_n184_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-40ffc38-624x1200.png' alt='Stacks Image p72_n185' />
+</div>
+
+</div></div></div>
+</div></div></div><div id='stacks_out_p72_n265_page0' class='stacks_out'><div id='stacks_in_p72_n265_page0' class='stacks_in com_stacks4stacks_stacks_toggle_stack'><!-- Toggle Stack by Will Woodgate. Visit http://www.stacks4stacks.com for more information -->
+
+<div id="toggleWrapper_stacks_in_p72_n265_page0">
+	
+	<div id="toggleTrigger_stacks_in_p72_n265_page0" class="toggleTrigger"><a href="#toggleTrigger_stacks_in_p72_n265_page0"></a><div id='stacks_out_p72_n268_page0' class='stacks_out'><div id='stacks_in_p72_n268_page0' class='stacks_in text_stack'>+ Click to see feature details</div></div></div>
+
+	
+	<div id="toggleContainer_stacks_in_p72_n265_page0" class="toggleContainer">
+		<div id='stacks_out_p72_n272_page0' class='stacks_out'><div id='stacks_in_p72_n272_page0' class='stacks_in com_yourhead_stacks_two_columns_stack'><div class='s3_row'>
+	<div class='s3_column s3_column_left'><div id='stacks_out_p72_n275_page0' class='stacks_out'><div id='stacks_in_p72_n275_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-b9643d8-724x1198.png' alt='Stacks Image p72_n276' />
+</div>
+
+</div></div><div id='stacks_out_p72_n283_page0' class='stacks_out'><div id='stacks_in_p72_n283_page0' class='stacks_in html_stack'><br />
+<br />
+</div></div><div id='stacks_out_p72_n279_page0' class='stacks_out'><div id='stacks_in_p72_n279_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-a5a5f29-698x1198.png' alt='Stacks Image p72_n280' />
+</div>
+
+</div></div><div id='stacks_out_p72_n287_page0' class='stacks_out'><div id='stacks_in_p72_n287_page0' class='stacks_in html_stack'><br />
+<br />
+</div></div><div id='stacks_out_p72_n291_page0' class='stacks_out'><div id='stacks_in_p72_n291_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-705f0ee-656x1198.png' alt='Stacks Image p72_n292' />
+</div>
+
+</div></div><div id='stacks_out_p72_n295_page0' class='stacks_out'><div id='stacks_in_p72_n295_page0' class='stacks_in html_stack'><br />
+<br />
+</div></div><div id='stacks_out_p72_n297_page0' class='stacks_out'><div id='stacks_in_p72_n297_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-cb5792b.jpg' alt='Stacks Image p72_n298' />
+</div>
+
+</div></div></div>
+	<div class='s3_column s3_column_right'><div id='stacks_out_p72_n277_page0' class='stacks_out'><div id='stacks_in_p72_n277_page0' class='stacks_in text_stack'><span style="font:15px HelveticaNeue; color:#6C6C6C;"><br /><br /><br /><br /><br /><br />Discover how Starbucks is trending on social media<br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /></span></div></div><div id='stacks_out_p72_n289_page0' class='stacks_out'><div id='stacks_in_p72_n289_page0' class='stacks_in text_stack'><span style="font:15px HelveticaNeue; color:#6C6C6C;">Discover what people talk about Starbucks and engage them<br /></span><span style="font:15px HelveticaNeue; color:#6C6C6C;"><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /></span></div></div><div id='stacks_out_p72_n293_page0' class='stacks_out'><div id='stacks_in_p72_n293_page0' class='stacks_in text_stack'><span style="font:15px HelveticaNeue; color:#6C6C6C;">Export all users talking about Starbucks within certain region for further analysis<br /></span><span style="font:15px HelveticaNeue; color:#6C6C6C;"><br /><br /><br /><br /><br /><br /><br /></span></div></div><div id='stacks_out_p72_n299_page0' class='stacks_out'><div id='stacks_in_p72_n299_page0' class='stacks_in text_stack'><span style="font:15px HelveticaNeue; color:#6C6C6C;"><br /><br /><br />Advertising to exported users<br /></span><span style="font:15px HelveticaNeue; color:#6C6C6C;"><br /><br /><br /><br /></span></div></div></div>
+</div></div></div>
+	</div><!--/toggleContainer-->
+
+	
+
+</div><!--/toggleWrapper-->
+
+<div style="clear:both;"></div></div></div><div id='stacks_out_p72_n270_page0' class='stacks_out'><div id='stacks_in_p72_n270_page0' class='stacks_in html_stack'><br />
+</div></div><div id='stacks_out_p72_n227_page0' class='stacks_out'><div id='stacks_in_p72_n227_page0' class='stacks_in text_stack'><span id='stacks_in_p72_n228_page0'><br /><br /><i>Also, you can view Zoom Social online.</I><br /><br /></span></div></div><div id='stacks_out_p72_n229_page0' class='stacks_out'><div id='stacks_in_p72_n229_page0' class='stacks_in com_yourhead_stack_button_stack'><div id='stacks_in_p72_n229_page0_button'><a href="http://maps.locussocial.com/" rel="external">Enter
+</a></div></div></div><div id='stacks_out_p72_n240_page0' class='stacks_out'><div id='stacks_in_p72_n240_page0' class='stacks_in html_stack'><br /></div></div><div id='stacks_out_p72_n233_page0' class='stacks_out'><div id='stacks_in_p72_n233_page0' class='stacks_in com_stacks4stacks_stacks_toggle_stack'><!-- Toggle Stack by Will Woodgate. Visit http://www.stacks4stacks.com for more information -->
+
+<div id="toggleWrapper_stacks_in_p72_n233_page0">
+	
+	<div id="toggleTrigger_stacks_in_p72_n233_page0" class="toggleTrigger"><a href="#toggleTrigger_stacks_in_p72_n233_page0"></a><div id='stacks_out_p72_n238_page0' class='stacks_out'><div id='stacks_in_p72_n238_page0' class='stacks_in text_stack'>+ Click to see feature details</div></div></div>
+
+	
+	<div id="toggleContainer_stacks_in_p72_n233_page0" class="toggleContainer">
+		<div id='stacks_out_p72_n242_page0' class='stacks_out'><div id='stacks_in_p72_n242_page0' class='stacks_in markdown_stack'><h3 id="zoomsocial">Zoom Social</h3>
+
+<p><b>Locus Social engine</b> can add <b>data layer</b> to existing <b>map services</b></p>
+
+<ul>
+<li>Make static maps dynamic, live and data-centric.</li>
+<li>Working with major maps: Google, Bing, Apple, Mapbox, Mapquest, Open Street Map, Here, Amap, Baidu, and etc.</li>
+<li><a href="http://map.zoomsocial.com">Demo</a></li>
+</ul></div></div>
+	</div><!--/toggleContainer-->
+
+	
+
+</div><!--/toggleWrapper-->
+
+<div style="clear:both;"></div></div></div><div id='stacks_out_p72_n231_page0' class='stacks_out'><div id='stacks_in_p72_n231_page0' class='stacks_in html_stack'><br />
+</div></div><div id='stacks_out_p72_n220_page0' class='stacks_out'><div id='stacks_in_p72_n220_page0' class='stacks_in text_stack'><span id='stacks_in_p72_n221_page0'><br /><br /><i>Get the real-time, latest map created by satellite and drone. </I><br /><br /></span></div></div><div id='stacks_out_p72_n246_page0' class='stacks_out'><div id='stacks_in_p72_n246_page0' class='stacks_in image_stack'>
+<div class='centered_image' >
+    <img class='imageStyle' src='files/stacks-image-3a77c4e.png' alt='Stacks Image p72_n247' />
+</div>
+
+</div></div><div id='stacks_out_p72_n215_page0' class='stacks_out'><div id='stacks_in_p72_n215_page0' class='stacks_in com_yourhead_stacks_two_columns_stack'><div class='s3_row'>
+	<div class='s3_column s3_column_left'><div class='slice empty out'><div class='slice empty in'></div></div></div>
+	<div class='s3_column s3_column_right'><div class='slice empty out'><div class='slice empty in'></div></div></div>
+</div></div></div></div>
+    </div>
+  </div>
+</div></div></div></div></div><div id='stacks_out_101_page0' class='stacks_out'><div id='stacks_in_101_page0' class='stacks_in com_joeworkman_stacks_elevator_stack'>
+
+</div></div><div id='stacks_out_83_page0' class='stacks_out'><div id='stacks_in_83_page0' class='stacks_in com_seydesign_stack_codafy_stack'>
+
+</div></div></div></div>
+</section><footer class="theme"><div id="extraContainer2"></div><div class="copy">&copy; 2017 Locus Social</div></footer></div><div id="nav-config"></div><div id="layout-config"></div>
+  <link rel="stylesheet" type="text/css" media="all" href="rw_common/themes/forward/consolidated-0.css?rwcache=522861671" />
+		
+  <link rel="stylesheet" href="https://d1azc1qln24ryf.cloudfront.net/47089/SocialIconsNCD/style-cf.css?0">
+  <!--[if IE 9]><style type="text/css">#gradient-effect{display: none}</style><!-- <![endif]-->
+  
+  <script>window.jQuery || document.write('<script src="rw_common/themes/forward/assets/js/jquery-2.1.1.min.js">\x3C/script>')</script>
+<script defer>
+      var ncdVars = function (){ 
+          pullup = $('#layout-config').css('padding-top') == '1px';
+          navVisible = $('#nav-config').css('padding-right') == '1px';
+          navMouseClose = $('#nav-config').css('padding-bottom') == '1px';
+          navSubParentDisable = $('#nav-config').css('padding-left') == '1px';
+      };
+  </script>
+  <script src="rw_common/themes/forward/assets/js/javascript.js" defer></script></body></html>
